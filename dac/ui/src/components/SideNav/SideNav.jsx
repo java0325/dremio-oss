@@ -19,6 +19,8 @@ import PropTypes from "prop-types";
 import Immutable from "immutable";
 import { compose } from "redux";
 import { withRouter } from "react-router";
+import { useState } from "react";
+import AgentDrawer from "#oss/pages/AgentPage/AgentDrawer";
 
 import { getLocation } from "selectors/routing";
 
@@ -42,6 +44,8 @@ import { nameToInitials } from "#oss/exports/utilities/nameToInitials";
 import { isActive } from "./SideNavUtils";
 import HelpMenu from "./HelpMenu";
 import { TopAction } from "./components/TopAction";
+// @ts-ignore
+import { Tooltip } from "dremio-ui-lib/components";
 import clsx from "clsx";
 import * as PATHS from "../../exports/paths";
 import CatalogsMenu from "@inject/components/SideNav/CatalogsMenu";
@@ -80,6 +84,8 @@ const SideNav = (props) => {
     showOrganization = true,
   } = props;
 
+  const [agentOpen, setAgentOpen] = useState(false);
+
   const organizationLanding =
     typeof getSessionContext().getOrganizationId === "function";
   const userName = user.get("userName");
@@ -93,6 +99,9 @@ const SideNav = (props) => {
   const intl = useIntl();
   const logoSVG = "corporate/dremio";
   const defaultContext = useDefaultContext(userName);
+  const projectBaseUrl = commonPaths
+    .projectBase.link({ projectId })
+    .replace(/\/$/, "");
 
   const getNewQueryHref = () => {
     const resourceId = parseResourceId(location.pathname, defaultContext);
@@ -239,6 +248,39 @@ const SideNav = (props) => {
                 alt="SideNav.Jobs"
                 data-qa="select-jobs"
               />
+              <TopAction
+                tooltipProps={{ placement: "right" }}
+                active={isActive({ name: PATHS.aiAssistant(), loc })}
+                url={`${projectBaseUrl}${PATHS.aiAssistant()}`}
+                icon="interface/search"
+                alt="SideNav.AIAssistant"
+                data-qa="select-ai-assistant"
+              />
+              <div
+                role="listitem"
+                className={`sideNav-item item__hover`}
+              >
+                <Tooltip
+                  content={intl.formatMessage({ id: "SideNav.Agent" })}
+                  placement="right"
+                >
+                  <div>
+                    <button
+                      className="agent-drawer-toggle"
+                      onClick={() => setAgentOpen((v) => !v)}
+                      data-qa="select-agent"
+                      aria-label={intl.formatMessage({ id: "SideNav.Agent" })}
+                      aria-expanded={agentOpen}
+                    >
+                      <div className={`sideNav-item__link${agentOpen ? " --active" : ""}`}>
+                        <div className="sideNav-item__icon">
+                          <dremio-icon name="interface/edit-wiki" alt="AI Agent" />
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </Tooltip>
+              </div>
               {organizationLanding && (
                 <>
                   <TopAction
@@ -301,6 +343,7 @@ const SideNav = (props) => {
         // Useful for rendering Modals that need to exist on every page once the user is logged in, for example
       }
       {SonarNavChildren && <SonarNavChildren />}
+      <AgentDrawer open={agentOpen} onClose={() => setAgentOpen(false)} />
     </>
   );
 };

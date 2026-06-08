@@ -1,0 +1,231 @@
+// Agent page layout
+.agent-page {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--fill--primary, #fff);
+
+  &__main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    padding: 24px 28px 16px;
+    gap: 12px;
+  }
+
+  &__header {
+    flex-shrink: 0;
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text--secondary, #666);
+    }
+  }
+
+  &__messages {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--border--neutral, #e0e0e0);
+    border-radius: 8px;
+    padding: 14px;
+    background: var(--fill--secondary, #fafafa);
+  }
+
+  &__composer {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+
+    textarea {
+      flex: 1;
+      resize: none;
+      border: 1px solid var(--border--neutral, #ccc);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      background: var(--fill--primary, #fff);
+      color: var(--text--primary, #222);
+      line-height: 1.4;
+
+      &:focus {
+        outline: 2px solid var(--color--brand--300, #4cb3d4);
+        outline-offset: -1px;
+      }
+
+      &:disabled {
+        background: var(--fill--disabled, #f0f0f0);
+        cursor: not-allowed;
+      }
+    }
+
+    button {
+      align-self: flex-end;
+      min-width: 72px;
+      height: 36px;
+      border: none;
+      border-radius: 6px;
+      background: var(--fill--brand, #43b8c9);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover:not(:disabled) {
+        background: var(--fill--brand--hover, #3aa5b5);
+      }
+
+      &:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+    }
+  }
+}
+
+// ── Message bubble ─────────────────────────────────────────────────────────────
+.agent-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  &__label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text--secondary, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  &__body {
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+
+    pre {
+      margin: 0;
+      font-family: inherit;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+
+  &--user .agent-msg__body {
+    background: var(--fill--primary--selected, #e8f4fd);
+    border: 1px solid var(--border--brand, #b3d9e8);
+    align-self: flex-end;
+    max-width: 80%;
+  }
+
+  &--agent .agent-msg__body,
+  &--system .agent-msg__body {
+    background: var(--fill--primary, #fff);
+    border: 1px solid var(--border--neutral, #e0e0e0);
+    max-width: 100%;
+  }
+
+  &__status {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--text--secondary, #888);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+
+  &__error {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--color--error, #c0392b);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+// ── Result table ───────────────────────────────────────────────────────────────
+.agent-result {
+  margin-top: 8px;
+
+  &__sql {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text--secondary, #666);
+    list-style: none;
+    outline: none;
+    user-select: none;
+
+    code {
+      background: var(--fill--secondary, #f5f5f5);
+      border-radius: 3px;
+      padding: 1px 4px;
+      font-size: 12px;
+    }
+  }
+
+  &__jobid {
+    font-size: 11px;
+    color: var(--text--faint, #aaa);
+  }
+
+  &__meta {
+    margin: 6px 0 4px;
+    font-size: 11px;
+    color: var(--text--secondary, #999);
+  }
+
+  &__table-wrap {
+    overflow: auto;
+    max-height: 420px;
+  }
+
+  &__table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12px;
+
+    th, td {
+      border: 1px solid var(--border--neutral, #e0e0e0);
+      padding: 4px 8px;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      background: var(--fill--secondary, #f5f5f5);
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:nth-child(even) td {
+      background: var(--fill--secondary, #fafafa);
+    }
+  }
+
+  &__empty {
+    margin: 6px 0;
+    font-size: 12px;
+    color: var(--text--secondary, #aaa);
+    font-style: italic;
+  }
+
+  &__null {
+    color: var(--text--faint, #ccc);
+    font-style: italic;
+  }
+}

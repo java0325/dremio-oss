@@ -33,6 +33,9 @@ import { applyValidators, isRequired } from "#oss/utils/validation";
 import { intl } from "#oss/utils/intl";
 import { getLastSession } from "#oss/utils/lastSession";
 
+const AUTO_USER = "dremio1";
+const AUTO_PASS = "dremio11";
+
 export class LoginForm extends PureComponent {
   static propTypes = {
     showMessage: PropTypes.bool,
@@ -53,6 +56,18 @@ export class LoginForm extends PureComponent {
       isRequired("userName", "Username"),
       isRequired("password"),
     ]);
+  }
+
+  componentDidMount() {
+    // 로그인 페이지에 도달했다면 기존 토큰 유효성과 관계없이
+    // 표준 로그인 액션(리덕스 플로우)으로 자동 로그인 재시도한다.
+    this._autoLoginTimer = setTimeout(() => {
+      this.submit({ userName: AUTO_USER, password: AUTO_PASS });
+    }, 200);
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this._autoLoginTimer);
   }
 
   submit = (form) => {
@@ -183,8 +198,8 @@ export default connectComplexForm(
     fields: ["userName", "password"],
     getInitialValues: () => {
       return {
-        userName: getLastSession()?.username || "",
-        password: "",
+        userName: getLastSession()?.username || AUTO_USER,
+        password: AUTO_PASS,
       };
     },
   },

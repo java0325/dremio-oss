@@ -46,6 +46,8 @@ import additionalRootRoutes from "@inject/additionalRootRoutes.tsx";
 
 import JobsPage from "./pages/JobsPage/JobsPage";
 import { ReflectionJobsPage } from "./pages/ReflectionJobsPage/ReflectionJobsPage";
+import AIAssistantPage from "./pages/AIAssistantPage/AIAssistantPage";
+// AgentPage is now a slide-in drawer rendered via SideNav, not a route
 import SingleJobPage from "#oss/pages/JobDetailsPage/JobDetailsPage";
 import routeConfig from "@inject/routesConfig";
 import notFoundRoute from "@inject/NotFoundRoute";
@@ -211,6 +213,8 @@ export default (dispatch) => {
                     path={commonPaths.external.fullRoute()}
                     component={AllSources}
                   />
+                  <Route path="assistant" component={AIAssistantPage} />
+                  {/* Agent is now a drawer panel, not a page route */}
                   <Route
                     path={commonPaths.nessie.fullRoute()}
                     component={AllSources}

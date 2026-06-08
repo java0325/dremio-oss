@@ -907,6 +907,8 @@
   "SideNav.Datasets": "Datasets",
   "SideNav.Jobs": "Jobs",
   "SideNav.NewQuery": "SQL Runner",
+  "SideNav.AIAssistant": "AI Assistant",
+  "SideNav.Agent": "AI Agent",
   "SideNav.Help": "Help",
   "SideNav.User": "User: ",
   "SideNav.OpenNav": "Expand",

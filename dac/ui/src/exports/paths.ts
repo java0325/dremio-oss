@@ -73,6 +73,8 @@ export const jobsNew = () => `/jobs-new` as const;
  * @deprecated import from sonarPaths
  */
 export const newQuery = () => `/new_query` as const;
+export const aiAssistant = () => `/assistant` as const;
+export const agent = () => `/agent` as const;
 
 /**
  * @deprecated import from sonarPaths

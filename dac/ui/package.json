@@ -19,7 +19,7 @@
     "overwrite-sourcemaps": "ts-node ./build-utils/overwriteSourcemaps.ts",
     "postinstall": "node --run licensecheck",
     "report:oss": "node licenseCheck.js",
-    "start": "SKIP_SENTRY_STEP=true webpack serve",
+    "start": "cross-env DEV_PROXY_CONFIG_PATH=./proxy.config.js SKIP_SENTRY_STEP=true webpack serve",
     "test": "npm-run-all --print-label --parallel lint:js test:only ts-check",
     "test:base": "cd ../../.. && cross-env BABEL_ENV=test mocha --exit --require ${OLDPWD}/test/index.js --experimental-require-module --no-experimental-detect-module",
     "test:coverage": "cross-env BABEL_ENV=test nyc mocha --require ./test/index.js ${DREMIO_UI_TESTS:-$PWD/src/\\**/*-spec.[t|j]s?(x)} --experimental-require-module --no-experimental-detect-module",

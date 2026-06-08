@@ -14,8 +14,12 @@
  * limitations under the License.
  */
 import * as env from "env-var";
+import path from "path";
 
 const DEV_PROXY_CONFIG_PATH = env.get("DEV_PROXY_CONFIG_PATH").asString();
+const resolvedProxyConfigPath = DEV_PROXY_CONFIG_PATH
+  ? path.resolve(process.cwd(), DEV_PROXY_CONFIG_PATH)
+  : undefined;
 
 export const devServer = {
   client: {
@@ -39,9 +43,7 @@ export const devServer = {
   },
   hot: true,
   port: 3005,
-  proxy: DEV_PROXY_CONFIG_PATH
-    ? require(DEV_PROXY_CONFIG_PATH).proxy
-    : undefined,
+  proxy: resolvedProxyConfigPath ? require(resolvedProxyConfigPath).proxy : undefined,
   static: {
     directory: "./public",
   },

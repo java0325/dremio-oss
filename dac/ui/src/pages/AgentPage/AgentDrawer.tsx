@@ -561,67 +561,27 @@ function SuggestionCards({
 // ── ResultTabs (Table + Chart) ────────────────────────────────────────────────
 
 function ResultTabs({ data }: { data: JobResults }) {
-  const [tab, setTab] = useState<"table" | "chart">("table");
-  const chartAvailable = useMemo(
-    () =>
-      data.rows?.length > 0 &&
-      data.schema?.some((c) =>
-        ["INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "REAL"].includes(
-          (c.type?.name ?? "").toUpperCase(),
-        ),
+  const chartAvailable = useMemo(() => {
+    if (!data.rows?.length) return false;
+    return data.schema?.some((c) =>
+      ["INTEGER", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "REAL"].includes(
+        (c.type?.name ?? "").toUpperCase(),
       ),
-    [data],
-  );
-
-  const tabBtn = (id: "table" | "chart", label: string) => (
-    <button
-      disabled={id === "chart" && !chartAvailable}
-      onClick={() => setTab(id)}
-      style={{
-        background: tab === id ? "#43b8c9" : "transparent",
-        border: "none",
-        borderRadius: 999,
-        color: tab === id ? "#fff" : "#6b7280",
-        cursor: id === "chart" && !chartAvailable ? "not-allowed" : "pointer",
-        opacity: id === "chart" && !chartAvailable ? 0.45 : 1,
-        fontSize: 12,
-        fontWeight: tab === id ? 700 : 500,
-        padding: "4px 14px",
-        transition: "background 0.15s, color 0.15s",
-      }}
-      type="button"
-    >
-      {label}
-    </button>
-  );
+    );
+  }, [data]);
 
   return (
     <div style={{ marginTop: 14 }}>
-      {/* Tab bar */}
-      <div
-        style={{
-          alignItems: "center",
-          background: "#f3f4f6",
-          borderRadius: 999,
-          display: "inline-flex",
-          gap: 2,
-          marginBottom: 10,
-          padding: 3,
-        }}
-      >
-        {tabBtn("chart", "📊 차트")}
-        {tabBtn("table", "📋 표")}
-      </div>
-
-      {tab === "chart" &&
-        (chartAvailable ? (
-          <SmartChart data={data} />
-        ) : (
-          <p style={{ color: "#6b7280", fontSize: 12, marginTop: 6 }}>
-            차트를 생성할 수 있는 숫자형 컬럼이 없어 표로 표시합니다.
+      {chartAvailable ? (
+        <SmartChart data={data} />
+      ) : (
+        <>
+          <p style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>
+            차트로 표시할 수 없어 표로 보여드립니다.
           </p>
-        ))}
-      {tab === "table" && <ResultTable data={data} />}
+          <ResultTable data={data} />
+        </>
+      )}
     </div>
   );
 }

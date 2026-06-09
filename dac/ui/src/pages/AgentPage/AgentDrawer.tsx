@@ -572,15 +572,24 @@ function ResultTabs({ data }: { data: JobResults }) {
 
   return (
     <div style={{ marginTop: 14 }}>
-      {chartAvailable ? (
-        <SmartChart data={data} />
-      ) : (
-        <>
-          <p style={{ color: "#6b7280", fontSize: 12, marginBottom: 8 }}>
-            차트로 표시할 수 없어 표로 보여드립니다.
-          </p>
-          <ResultTable data={data} />
-        </>
+      {/* 결과 데이터 — 항상 표로 표시 */}
+      <div
+        style={{
+          color: "#374151",
+          fontSize: 12,
+          fontWeight: 700,
+          marginBottom: 6,
+        }}
+      >
+        결과 데이터
+      </div>
+      <ResultTable data={data} />
+
+      {/* 차트 — 숫자형 컬럼이 있을 때만 추가 표시 */}
+      {chartAvailable && (
+        <div style={{ marginTop: 20 }}>
+          <SmartChart data={data} />
+        </div>
       )}
     </div>
   );

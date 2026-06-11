@@ -182,6 +182,254 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return proxyRes;
 }
 
+// ── Source / Schema types ─────────────────────────────────────────────────────
+
+export type SourceInfo = {
+  name: string;
+  type: string;  // POSTGRES, MYSQL, HOME, etc.
+};
+
+export type ColumnInfo = {
+  name: string;
+  type: string;
+};
+
+export type TableInfo = {
+  schema: string;
+  name: string;
+  columns: ColumnInfo[];
+};
+
+export type SourceSchema = {
+  sourceName: string;
+  tables: TableInfo[];
+};
+
+// ── Source API functions ──────────────────────────────────────────────────────
+
+function quotePath(path: string[]): string {
+  return path.map((part) => `"${part}"`).join(".");
+}
+
+function byPathUrl(path: string[]): string {
+  return `catalog/by-path/${path.map(encodeURIComponent).join("/")}`;
+}
+
+/** List all Dremio catalog sources */
+export async function listSources(): Promise<SourceInfo[]> {
+  try {
+    const res = await apiFetch("catalog");
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items: any[] = data.data ?? [];
+    return items
+      .filter((it: any) => it.containerType === "SOURCE" || it.type === "SOURCE")
+      .map((it: any) => ({ name: it.path?.[0] ?? it.name, type: it.datasetType ?? "UNKNOWN" }));
+  } catch {
+    return [];
+  }
+}
+
+/** Fetch table list from Dremio Catalog API. This is more reliable for external sources. */
+async function fetchCatalogTables(sourceName: string): Promise<TableInfo[]> {
+  const tables: TableInfo[] = [];
+
+  async function readCatalogPath(path: string[]) {
+    const res = await apiFetch(byPathUrl(path));
+    if (!res.ok) return;
+    const data = await res.json();
+    const children: any[] = data.children ?? [];
+
+    for (const child of children) {
+      const childPath: string[] = child.path ?? [];
+      if (!childPath.length) continue;
+
+      if (child.type === "DATASET") {
+        tables.push({
+          schema: childPath.slice(0, -1).join("."),
+          name: childPath[childPath.length - 1],
+          columns: [],
+        });
+      } else if (child.containerType === "FOLDER" || child.type === "CONTAINER") {
+        await readCatalogPath(childPath);
+      }
+    }
+  }
+
+  await readCatalogPath([sourceName]);
+  return tables;
+}
+
+/** Fetch a small result set to infer columns for a table path. */
+async function inferColumnsFromQuery(path: string[]): Promise<ColumnInfo[]> {
+  try {
+    const jobId = await submitSql(`SELECT * FROM ${quotePath(path)} LIMIT 1`);
+    const job = await waitForJob(jobId);
+    if (job.state !== "COMPLETED") return [];
+    const result = await fetchJobResults(jobId, 0, 1);
+    return result.schema.map((c) => ({ name: c.name, type: c.type.name }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch table list and column info for a source via INFORMATION_SCHEMA.
+ *
+ * Dremio's INFORMATION_SCHEMA always uses TABLE_CATALOG = 'DREMIO'.
+ * External sources appear as TABLE_SCHEMA = '<sourceName>.<subschema>'
+ * (e.g. "bosch_production.public"), while home spaces appear as TABLE_SCHEMA = '@dremio1'.
+ */
+export async function fetchSourceSchema(sourceName: string): Promise<SourceSchema> {
+  const tables: TableInfo[] = [];
+  const matchesSource = (tableSchema: string) =>
+    sourceName.startsWith("@")
+      ? tableSchema === sourceName
+      : tableSchema === sourceName || tableSchema.startsWith(`${sourceName}.`);
+
+  try {
+    // Step 1: get table list
+    const tablesJobId = await submitSql(
+      `SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA."TABLES"
+       WHERE TABLE_CATALOG = 'DREMIO'
+         AND TABLE_SCHEMA NOT IN ('INFORMATION_SCHEMA','sys')
+       ORDER BY TABLE_SCHEMA, TABLE_NAME`
+    );
+    const tablesJob = await waitForJob(tablesJobId);
+    if (tablesJob.state === "COMPLETED") {
+      const tablesResult = await fetchJobResults(tablesJobId, 0, 500);
+
+      // Step 2: get column list
+      const colsJobId = await submitSql(
+        `SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE
+         FROM INFORMATION_SCHEMA."COLUMNS"
+         WHERE TABLE_CATALOG = 'DREMIO'
+         ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`
+      );
+      const colsJob = await waitForJob(colsJobId);
+      const colsMap: Record<string, ColumnInfo[]> = {};
+
+      if (colsJob.state === "COMPLETED") {
+        const colsResult = await fetchJobResults(colsJobId, 0, 2000);
+        for (const row of colsResult.rows) {
+          const tableSchema = String(row.TABLE_SCHEMA);
+          if (!matchesSource(tableSchema)) continue;
+          const key = `${row.TABLE_SCHEMA}.${row.TABLE_NAME}`;
+          if (!colsMap[key]) colsMap[key] = [];
+          colsMap[key].push({
+            name: String(row.COLUMN_NAME),
+            type: String(row.DATA_TYPE),
+          });
+        }
+      }
+
+      for (const row of tablesResult.rows) {
+        const tableSchema = String(row.TABLE_SCHEMA);
+        if (!matchesSource(tableSchema)) continue;
+        const name = String(row.TABLE_NAME);
+        tables.push({
+          schema: tableSchema,
+          name,
+          columns: colsMap[`${tableSchema}.${name}`] ?? [],
+        });
+      }
+    }
+  } catch {
+    // Partial failure – return what we have
+  }
+
+  // Fallback: external sources are reliably visible through Catalog API even
+  // when INFORMATION_SCHEMA metadata has not fully refreshed.
+  if (tables.length === 0) {
+    const catalogTables = await fetchCatalogTables(sourceName);
+    for (const table of catalogTables) {
+      const path = [...table.schema.split("."), table.name];
+      tables.push({
+        ...table,
+        columns: await inferColumnsFromQuery(path),
+      });
+    }
+  }
+
+  return { sourceName, tables };
+}
+
+/**
+ * Convert a Dremio TABLE_SCHEMA value to a quoted SQL path prefix.
+ *
+ * Examples:
+ *   "@dremio1"           → `"@dremio1"`
+ *   "bosch_production.public" → `"bosch_production"."public"`
+ */
+function schemaToSqlPrefix(tableSchema: string): string {
+  return tableSchema
+    .split(".")
+    .map((part) => `"${part}"`)
+    .join(".");
+}
+
+// Bosch 스테이션 → (테이블, 대표 컬럼 5개) 정적 매핑
+// agentApi에서 schema_context에 주입해 LLM이 올바른 테이블/컬럼을 선택하게 함
+const BOSCH_STATION_HINT = `
+=== Bosch 생산라인 스테이션-테이블 매핑 (중요) ===
+| 스테이션      | 테이블     | 대표 컬럼 (앞 5개)                                                        |
+|-------------|----------|--------------------------------------------------------------------------|
+| S1~S23      | bosch_l0 | l0_s1_f25, l0_s1_f27, l0_s2_f33, l0_s9_f151, l0_s10_f215              |
+| S24~S25     | bosch_l1 | l1_s25_f1852, l1_s25_f1853, l1_s25_f1856, l1_s25_f1859, l1_s25_f1861  |
+| S26~S28     | bosch_l2 | l2_s26_f3038, l2_s26_f3042, l2_s27_f3131, l2_s27_f3135, l2_s28_f3224  |
+| S29~S49     | bosch_l3 | l3_s29_f3317, l3_s29_f3320, l3_s29_f3323, l3_s32_f3851, l3_s44_f4102  |
+
+규칙:
+- S25 관련 쿼리 → 반드시 "bosch_production"."public"."bosch_l1" 테이블 사용
+- S26/S27/S28 쿼리 → 반드시 "bosch_production"."public"."bosch_l2" 테이블 사용
+- S29 이상 쿼리 → 반드시 "bosch_production"."public"."bosch_l3" 테이블 사용
+- 컬럼명 패턴: l<라인번호>_s<스테이션번호>_f<피처번호>
+- non-null 필터 필수: WHERE <첫번째_피처컬럼> IS NOT NULL
+- 피처 값은 'T1', 'T2' 등 카테고리 코드 (문자열)
+`;
+
+/** Format SourceSchema into a compact text block for the LLM system prompt. */
+export function formatSchemaForLLM(schema: SourceSchema): string {
+  if (!schema.tables.length) return "";
+  const lines: string[] = [`=== ${schema.sourceName} 데이터베이스 스키마 ===\n`];
+  const MAX_COLUMNS_PER_TABLE = 80;
+
+  const isBosch = schema.sourceName.toLowerCase().includes("bosch");
+
+  for (const t of schema.tables) {
+    // bosch_column_meta는 LLM 스키마 컨텍스트에서 제외 (2140행 메타데이터 테이블)
+    if (isBosch && t.name === "bosch_column_meta") continue;
+
+    // TABLE_SCHEMA can be "bosch_production.public" or "@dremio1"
+    const prefix = schemaToSqlPrefix(t.schema);
+    const fullName = `${prefix}."${t.name}"`;
+    const shownColumns = t.columns.slice(0, MAX_COLUMNS_PER_TABLE);
+    const cols = t.columns.length
+      ? [
+          ...shownColumns.map((c) => `  - ${c.name} (${c.type})`),
+          ...(t.columns.length > MAX_COLUMNS_PER_TABLE
+            ? [`  - ... ${t.columns.length - MAX_COLUMNS_PER_TABLE} more columns omitted`]
+            : []),
+        ].join("\n")
+      : "  (컬럼 정보 없음)";
+    lines.push(`테이블: ${fullName}\n${cols}\n`);
+  }
+
+  lines.push(
+    `SQL 규칙:\n` +
+    `- 테이블명 형식: 위 스키마의 "테이블: ..." 경로를 그대로 사용\n` +
+    `- 기본 LIMIT 100 적용\n` +
+    `- 문자열 숫자 컬럼은 CAST 사용 (예: CAST(col AS DOUBLE))\n`
+  );
+
+  // bosch_production 접속 시 스테이션 힌트 추가
+  if (isBosch) {
+    lines.push(BOSCH_STATION_HINT);
+  }
+
+  return lines.join("\n");
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 /** Submit a SQL query, returns the new job id. */
@@ -250,5 +498,36 @@ export async function fetchJobResults(
       body.errorMessage ?? `결과 조회 실패 (HTTP ${res.status})`,
     );
   }
+  return res.json();
+}
+
+// ── Insight API ──────────────────────────────────────────────────────────────
+
+export type InsightResponse = {
+  type: string;
+  response: string;
+  model: string;
+};
+
+/**
+ * Sends query result data to the LLM server's /insight endpoint
+ * and returns a human-readable business insight text.
+ */
+export async function callInsight(
+  question: string,
+  data: Record<string, unknown>[],
+  sql?: string,
+  context?: string,
+): Promise<InsightResponse> {
+  const res = await fetch("/llm/insight", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, data, sql, context }),
+    signal:
+      typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(90000)
+        : undefined,
+  });
+  if (!res.ok) throw new Error(`인사이트 서버 오류 (${res.status})`);
   return res.json();
 }

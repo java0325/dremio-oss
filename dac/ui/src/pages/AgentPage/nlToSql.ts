@@ -18,10 +18,13 @@
  * Deterministic Text-to-SQL converter for the sample Dremio dataset.
  *
  * Actual table schemas (confirmed against live Dremio):
- *   "@dremio1".customers  – customer_id, name, email, city, country, signup_date, tier
- *   "@dremio1".products   – product_id, name, category, price, stock_qty, supplier
- *   "@dremio1".orders     – order_id, customer_id, order_date, status, total_amount, payment_method
- *   "@dremio1".order_items – item_id, order_id, product_id, quantity, unit_price, discount_pct
+ *   "@dremio1".customers     – customer_id, name, email, city, country, signup_date, tier
+ *   "@dremio1".products      – product_id, name, category, price, stock_qty, supplier
+ *   "@dremio1".orders        – order_id, customer_id, order_date, status, total_amount, payment_method
+ *   "@dremio1".order_items   – item_id, order_id, product_id, quantity, unit_price, discount_pct
+ *   "@dremio1".commerce_data – time, event_name, product_id, category_id, category_name, brand,
+ *                              price, user_id, session, category_1, category_2, category_3
+ *                              (~7M 이커머스 이벤트 로그; event_name: view/cart/remove_from_cart/purchase)
  *
  * status values  : 'Pending' | 'Completed' | 'Cancelled'
  * tier values    : 'Gold' | 'Silver' | 'Bronze'
@@ -47,16 +50,19 @@ const T = {
   products:  `${H}.products`,
   orders:    `${H}.orders`,
   items:     `${H}.order_items`,
+  commerce:  `${H}.commerce_data`,
 } as const;
 
 const TABLE_OVERVIEW = `
-SELECT 'customers'   AS table_name, COUNT(*) AS row_count FROM ${T.customers}
+SELECT 'customers'     AS table_name, COUNT(*) AS row_count FROM ${T.customers}
 UNION ALL
-SELECT 'products'    AS table_name, COUNT(*) AS row_count FROM ${T.products}
+SELECT 'products'      AS table_name, COUNT(*) AS row_count FROM ${T.products}
 UNION ALL
-SELECT 'orders'      AS table_name, COUNT(*) AS row_count FROM ${T.orders}
+SELECT 'orders'        AS table_name, COUNT(*) AS row_count FROM ${T.orders}
 UNION ALL
-SELECT 'order_items' AS table_name, COUNT(*) AS row_count FROM ${T.items}
+SELECT 'order_items'   AS table_name, COUNT(*) AS row_count FROM ${T.items}
+UNION ALL
+SELECT 'commerce_data' AS table_name, COUNT(*) AS row_count FROM ${T.commerce}
 `.trim();
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -82,10 +88,12 @@ const tableOf = (lo: string) => {
     return { sql: T.items,     label: "주문 상세" };
   if (/customers?|고객|회원/i.test(lo))
     return { sql: T.customers, label: "고객" };
-  if (/products?|상품|제품|재고|카테고리/i.test(lo))
+  if (/products?|상품|제품|재고/i.test(lo))
     return { sql: T.products,  label: "상품" };
-  if (/orders?|주문|매출|결제|상태/i.test(lo))
+  if (/orders?|주문|결제|상태/i.test(lo))
     return { sql: T.orders,    label: "주문" };
+  if (/commerce[_\s-]?data|이커머스|커머스|이벤트\s*(로그|데이터)|행동\s*로그|클릭\s*로그|view|cart|purchase|구매\s*이벤트/i.test(lo))
+    return { sql: T.commerce,  label: "커머스 이벤트" };
   return null;
 };
 
@@ -98,8 +106,11 @@ const isDataQ = (lo: string) =>
     "매출", "주문", "고객", "상품", "제품", "카테고리",
     "재고", "결제", "상태", "도시", "국가", "등급", "티어",
     "고르", "많이", "가장", "상위", "하위",
+    "이커머스", "커머스", "이벤트", "클릭", "행동", "구매",
+    "코호트", "리텐션", "재방문", "재구매",
     "customer", "product", "order", "revenue", "sales",
     "count", "average", "avg", "sum", "top", "most", "list", "show",
+    "commerce", "event", "view", "cart", "purchase", "cohort", "retention",
   ]);
 
 // ── Sample-data rules (priority order) ────────────────────────────────────────
@@ -111,6 +122,150 @@ const rules: Rule[] = [
     test: (lo) => /샘플|sample/i.test(lo) && /(테이블|데이터|db|overview|현황|요약|구성)/i.test(lo),
     sql: TABLE_OVERVIEW,
     explanation: "샘플DB 테이블별 데이터 건수를 요약합니다.",
+  },
+
+  // ── Commerce event log queries ────────────────────────────────────────────────
+  // NOTE: "time" is a SQL reserved word → always quote as "time"
+  //       Time values are VARCHAR with timezone "2019-12-16 02:00:59+09"
+  //       Use SUBSTRING("time", 1, 10) for date, SUBSTRING("time", 1, 7) for month
+  //       Segmentation: use CTE + English segment keys (Korean in GROUP BY causes planning error)
+  {
+    test: (lo) => /(이커머스|커머스|commerce|행동\s*로그|클릭\s*로그|이벤트\s*로그).*?(조회|보여|샘플|최근|최신)/i.test(lo)
+      || /(조회|보여|샘플).*?(이커머스|커머스|commerce|이벤트\s*로그)/i.test(lo),
+    sql: (lo) => `SELECT "time", event_name, product_id, category_name, brand, CAST(price AS DOUBLE) AS price, user_id FROM ${T.commerce} ORDER BY "time" DESC LIMIT ${limit(lo, 50)}`,
+    explanation: "커머스 이벤트 로그 최근 데이터를 조회합니다.",
+  },
+  // 시계열 추이 분석 (일별 / 월별)
+  {
+    test: (lo) =>
+      // "시계열 분석", "추이 보여줘", "일별 이벤트 추이" 등 (이커머스 언급 없어도 매칭)
+      /(시계열|추이|트렌드|trend|일별|날짜별|시간별)\s*(분석|조회|보여줘?|알려줘?|이벤트|이커머스|커머스|commerce)?/i.test(lo)
+      && /(이커머스|커머스|commerce|이벤트|구매|시계열|추이|트렌드)/i.test(lo),
+    sql: `SELECT
+  SUBSTRING("time", 1, 10) AS event_date,
+  COUNT(*) AS total_events,
+  SUM(CASE WHEN event_name = 'view'     THEN 1 ELSE 0 END) AS views,
+  SUM(CASE WHEN event_name = 'cart'     THEN 1 ELSE 0 END) AS carts,
+  SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END) AS purchases
+FROM ${T.commerce}
+GROUP BY SUBSTRING("time", 1, 10)
+ORDER BY event_date`,
+    explanation: "일별 이벤트 추이(view/cart/purchase)를 시계열로 분석합니다.",
+  },
+  // 세그멘테이션 (구매 빈도 기반 사용자 분류)
+  // "세그먼테이션"(먼) / "세그멘테이션"(멘) 둘 다 지원, 이커머스 키워드 없어도 매칭
+  {
+    test: (lo) => /(세그먼테이션|세그멘테이션|세그먼트|segmentation|segment|사용자\s*분류|고객\s*분류|유저\s*분류|구매\s*빈도|구매\s*횟수)/i.test(lo),
+    sql: `WITH user_stats AS (
+  SELECT
+    user_id,
+    COUNT(*) AS total_events,
+    SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END) AS purchase_cnt
+  FROM ${T.commerce}
+  GROUP BY user_id
+)
+SELECT
+  CASE
+    WHEN purchase_cnt = 0  THEN 'no_purchase'
+    WHEN purchase_cnt = 1  THEN 'one_time'
+    WHEN purchase_cnt <= 5 THEN 'occasional'
+    ELSE                        'frequent'
+  END AS segment,
+  COUNT(*)                    AS user_cnt,
+  ROUND(AVG(total_events), 1) AS avg_events_per_user
+FROM user_stats
+GROUP BY
+  CASE
+    WHEN purchase_cnt = 0  THEN 'no_purchase'
+    WHEN purchase_cnt = 1  THEN 'one_time'
+    WHEN purchase_cnt <= 5 THEN 'occasional'
+    ELSE                        'frequent'
+  END
+ORDER BY user_cnt DESC`,
+    explanation: "구매 빈도 기반으로 사용자를 no_purchase / one_time / occasional / frequent 세그먼트로 분류합니다.",
+  },
+  // 가격대별 세그멘테이션
+  {
+    test: (lo) => /(가격대|가격\s*구간|price\s*range|price\s*segment)\s*(별|분석|세그|segment)/i.test(lo),
+    sql: `SELECT
+  CASE
+    WHEN CAST(price AS DOUBLE) < 10   THEN 'under_10'
+    WHEN CAST(price AS DOUBLE) < 50   THEN '10_to_50'
+    WHEN CAST(price AS DOUBLE) < 200  THEN '50_to_200'
+    ELSE                                   'over_200'
+  END AS price_segment,
+  COUNT(*)                                                      AS event_cnt,
+  SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END)     AS purchases,
+  ROUND(AVG(CAST(price AS DOUBLE)), 2)                          AS avg_price
+FROM ${T.commerce}
+WHERE price IS NOT NULL AND price != ''
+GROUP BY
+  CASE
+    WHEN CAST(price AS DOUBLE) < 10   THEN 'under_10'
+    WHEN CAST(price AS DOUBLE) < 50   THEN '10_to_50'
+    WHEN CAST(price AS DOUBLE) < 200  THEN '50_to_200'
+    ELSE                                   'over_200'
+  END
+ORDER BY purchases DESC`,
+    explanation: "가격대별(under_10 / 10_to_50 / 50_to_200 / over_200) 이벤트 및 구매 현황을 분석합니다.",
+  },
+  {
+    test: (lo) => /(이벤트|event)\s*(유형|타입|type|별|분포|현황|건수|통계)/i.test(lo)
+      || /(구매|view|cart|purchase)\s*(비율|분포|현황|통계|건수)/i.test(lo),
+    sql: `SELECT event_name, COUNT(*) AS cnt, ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) AS pct FROM ${T.commerce} GROUP BY event_name ORDER BY cnt DESC`,
+    explanation: "이벤트 유형별 (view/cart/purchase 등) 분포를 분석합니다.",
+  },
+  {
+    test: (lo) => /(카테고리|category)\s*(별|순위|상위|top|분석|현황)/i.test(lo) && /(이커머스|커머스|commerce|이벤트)/i.test(lo),
+    sql: (lo) => `SELECT category_1, COUNT(*) AS event_cnt, COUNT(DISTINCT user_id) AS unique_users, SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END) AS purchases FROM ${T.commerce} WHERE category_1 != 'Not defined' GROUP BY category_1 ORDER BY event_cnt DESC LIMIT ${limit(lo, 20)}`,
+    explanation: "카테고리별 이벤트 수, 순방문자, 구매 수를 분석합니다.",
+  },
+  {
+    test: (lo) => /(전환율|conversion|구매전환|cvr|ctr)/i.test(lo),
+    sql: `SELECT category_1, COUNT(CASE WHEN event_name = 'view' THEN 1 END) AS views, COUNT(CASE WHEN event_name = 'cart' THEN 1 END) AS carts, COUNT(CASE WHEN event_name = 'purchase' THEN 1 END) AS purchases, ROUND(COUNT(CASE WHEN event_name = 'purchase' THEN 1 END) * 100.0 / NULLIF(COUNT(CASE WHEN event_name = 'view' THEN 1 END), 0), 2) AS conversion_rate FROM ${T.commerce} WHERE category_1 != 'Not defined' GROUP BY category_1 ORDER BY conversion_rate DESC LIMIT 20`,
+    explanation: "카테고리별 view→purchase 전환율을 분석합니다.",
+  },
+  {
+    test: (lo) => /(브랜드|brand)\s*(별|순위|상위|top|분석)/i.test(lo) && /(이커머스|커머스|commerce|이벤트|구매)/i.test(lo),
+    sql: (lo) => `SELECT brand, COUNT(*) AS event_cnt, SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END) AS purchases, ROUND(AVG(CAST(price AS DOUBLE)), 2) AS avg_price FROM ${T.commerce} WHERE brand != 'Not defined' GROUP BY brand ORDER BY purchases DESC LIMIT ${limit(lo, 20)}`,
+    explanation: "브랜드별 이벤트 수와 구매 수를 분석합니다.",
+  },
+  {
+    test: (lo) => /(장바구니|카트|cart)\s*(추가|담기|이탈|분석|비율)/i.test(lo),
+    sql: `SELECT event_name, COUNT(*) AS cnt FROM ${T.commerce} WHERE event_name IN ('cart', 'remove_from_cart') GROUP BY event_name`,
+    explanation: "장바구니 추가 vs 제거 비율을 분석합니다.",
+  },
+  {
+    test: (lo) => /(상위|top)\s*\d*\s*(상품|제품|product)\s*(구매|view|이벤트|인기)/i.test(lo) && /(이커머스|커머스|commerce)/i.test(lo),
+    sql: (lo) => `SELECT product_id, category_name, brand, COUNT(*) AS event_cnt, SUM(CASE WHEN event_name = 'purchase' THEN 1 ELSE 0 END) AS purchases, ROUND(AVG(CAST(price AS DOUBLE)), 2) AS avg_price FROM ${T.commerce} GROUP BY product_id, category_name, brand ORDER BY purchases DESC LIMIT ${limit(lo, 20)}`,
+    explanation: "가장 많이 구매된 상위 상품을 조회합니다.",
+  },
+
+  // 코호트 분석 (첫 이벤트 월 × 구매 월)
+  // NOTE: commerce_data 기반 — customers/orders는 데이터가 너무 적어 의미 없음
+  {
+    test: (lo) => /(코호트|cohort|리텐션|retention|재방문|재구매|재활성)/i.test(lo),
+    sql: `WITH first_event AS (
+  SELECT user_id, MIN(SUBSTRING("time", 1, 7)) AS cohort_month
+  FROM ${T.commerce}
+  GROUP BY user_id
+),
+monthly_purchase AS (
+  SELECT user_id, SUBSTRING("time", 1, 7) AS activity_month
+  FROM ${T.commerce}
+  WHERE event_name = 'purchase'
+  GROUP BY user_id, SUBSTRING("time", 1, 7)
+)
+SELECT
+  f.cohort_month,
+  m.activity_month,
+  COUNT(DISTINCT m.user_id)  AS returning_buyers,
+  COUNT(DISTINCT f.user_id)  AS cohort_size
+FROM first_event f
+JOIN monthly_purchase m ON f.user_id = m.user_id
+GROUP BY f.cohort_month, m.activity_month
+ORDER BY f.cohort_month, m.activity_month`,
+    explanation: "사용자 최초 이벤트 월(코호트) × 구매 활동 월 기준 리텐션을 분석합니다.",
   },
 
   // ── Customer queries ──────────────────────────────────────────────────────────
